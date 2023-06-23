@@ -1,0 +1,1459 @@
+---
+title: "Erosion Analysis of Whitman County"
+output:
+  html_document:
+    theme: cerulean
+    fig_caption: yes
+    fig_height: 8
+    fig_width: 8
+    number_sections: no
+    toc: yes
+    toc_depth: 6
+    toc_float: no
+    toc_title: Table of contents
+  word_document:
+    toc: yes
+    toc_depth: '6'
+---
+  
+  
+  <!-- date: '2022-08-02' -->
+  
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(dplyr)
+library(tidyr)
+library(forecast)
+# install.packages("Kendall")
+library(lubridate)
+library(Kendall)
+library(trend)
+library(knitr)
+library(ggplot2)
+library(stringr)
+library(lme4)
+library(broom)
+library(purrr)
+library(trend)
+#install.packages("ggh4x")
+library(ggh4x)
+#install.packages("ggpmisc")
+library(ggpmisc)
+#install.packages("ggprism")
+library(ggprism)
+```
+
+```{r, include=FALSE}
+#### FUNCTIONS ####
+id_wateryr<-function(year,month){
+  
+  if (month>9){
+    watyear=year+1
+  }else{
+    watyear=year
+  }
+  return(watyear)
+}
+###########################
+id_seasons<-function(month){
+  if (month>11||month<3){
+    season = "winter"
+  }
+  else if (month>2&month<6){
+    season = "Spring"
+  }
+  else if (month>5&month<7){
+    season = "Summer"
+  }
+  else{
+    season = "Fall"
+  }
+  return(season)
+}
+
+####### 
+
+islessthnzero2 <- function(num) {
+  if (num <= 0) {a = 1}
+  else a = 0
+  
+  return(a)
+}
+
+##############
+
+isgreaterthnx <- function(num, x) {
+  if (num > x) {a = 1}
+  else a = 0
+  
+  return(a)
+}
+
+########
+
+issnowfall <- function(num, precip) {
+  if (num <= 0) {
+    
+    if (precip>0){
+      a = 1
+    }
+    else{
+      a = 0
+    }
+  }
+  else a = 0
+  
+  return(a)
+}
+
+
+#########
+
+round_df <- function(df, digits) {
+  nums <- vapply(df, is.numeric, FUN.VALUE = logical(1))
+  
+  df[,nums] <- round(df[,nums], digits = digits)
+  
+  (df)
+}
+
+get_r_squared<-function(fit) round(summary(fit)$adj.r.squared,4)
+get_slope<-function(fit) round(tidy(fit)$estimate[2],2)
+get_intercept<-function(fit) round(tidy(fit)$estimate[1],2)
+get_p_value<-function(fit) round(tidy(fit)$p.value[2],4)
+get_ttest_estimate<-function(fit) round(tidy(fit)$estimate,3)
+change<-function(fit){
+  if(tidy(fit)$estimate<0){
+    chng<-"Increase from past to present"
+  }
+  else{
+    chng<- "Decrease from past to present"
+  }
+  return(chng)
+}
+# apply_mannkendall<-function(df) MannKendall(df[,2])
+# apply_senslope<-function(df) sens.slope(df[,2])
+```
+
+```{r, include=FALSE}
+### graph materials ###
+
+my_custom_themes<-theme_bw()+
+  theme(plot.margin = unit(c(0.5,0.5,0.6,0.5), "cm"),
+        legend.position = c(1, 0.50),
+        legend.direction = "vertical",
+        legend.justification = c("right", "top"),
+        legend.box.just = "right",
+        legend.margin = margin(6, 6, 6, 6), 
+        # legend.title = element_text(size = 12), 
+        legend.title = element_blank(),
+        legend.text = element_text(size = 12)
+  )+
+  # labs(title = paste("Erosion in relation to", factor[n1]))+xlab("Scenarios")+ 
+  theme(axis.title.x = element_blank(), axis.title.y = element_text(size =16),
+        axis.text.x.bottom = element_text(angle = 70, hjust = 1, size = 16),
+        axis.text.y.left = element_text(size = 16),
+        plot.margin = unit(c(0.3,0.3,0.6,0.3), "cm"),plot.title = element_text(hjust = 0.5, size = 22), panel.grid.major = element_blank(),
+        strip.text = element_text(size = 15),
+        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+
+```
+
+
+```{r, include=FALSE}
+
+#data_er<-read.csv("Daily_erosion_data_slope_200m_csa4ha_altrots.csv", header = T)
+data_er<-read.csv("Daily_erosion_all_with_altrot_200m.csv", header = T)
+
+## removing water year 1939 and lower and 1983 and higher in the past
+dAAA1<-which(data_er$Time=="Past"&data_er$WY<1940)
+dAAA2<-which(data_er$Time=="Past"&data_er$WY>1982)
+## also removing water year 1982 and lower and 2021 and higher in the present
+dAAA3<-which(data_er$Time=="Present"&data_er$WY<1983)
+dAAA4<-which(data_er$Time=="Present"&data_er$WY>2020)
+
+data_er<-data_er[c(-dAAA1,-dAAA2,-dAAA3,-dAAA4),]
+
+
+```
+
+
+
+
+# Annual Average Erosion 
+
+The annual average erosion is higher in the past. It decreases in the present and also decreases with tillage intensity. In the present, FW rotation produced the highest erosion, in high and intermediate zones.
+
+```{r, echo=FALSE}
+
+rot_ord<-c("WF","FW", "WBP", "BPW","PWB","WBF","BFW","FWB")
+rot_clr<-c("#de2d26","#fc9272", "#006d2c", "#31a354","#74c476","#045a8d","#2b8cbe","#a6bddb")
+till_ord<-c("Intense","Reduced","Notill")
+Er_ag_yearly<-aggregate(Sed..Det...t.ha.~WY+Rotation+Zone+Time+Tillage, data_er, sum)
+Er_ag_yearly_avg<-round_df(aggregate(Sed..Det...t.ha.~Zone+Rotation+Time+Tillage, Er_ag_yearly, mean),1)
+Er_ag_yearly_avg$Tillage<-factor(Er_ag_yearly_avg$Tillage, levels = till_ord)
+Er_ag_yearly_avg$Rotation<-factor(Er_ag_yearly_avg$Rotation, levels = rot_ord)
+
+kable(Er_ag_yearly_avg)
+ggplot(Er_ag_yearly_avg, aes(fill = Rotation, x = Tillage, y = Sed..Det...t.ha.))+geom_bar(position = "dodge", stat = "identity")+
+  # facet_wrap(~Zone+Time, ncol= 2)+
+  facet_grid(rows = vars(Zone), cols = vars(Time), space = "free_x", scales = "free_x")+
+  
+  scale_fill_manual(values = rot_clr)+
+    labs(y = expression(paste("Erosion t  ", ha^-1)))+
+  my_custom_themes+theme(strip.text.x = element_text(size =18), legend.position = "right", legend.text = element_text(size=18))+
+ geom_text(aes(y =Sed..Det...t.ha.+2, label = Sed..Det...t.ha.),position = position_dodge(width = 1), check_overlap = TRUE, size = 5, fontface = "bold")
+# ggsave("rotation_order_averages2.eps", height = 8, width = 10)
+
+```
+
+```{r, echo=FALSE}
+#Climate and Management effects
+d1<-c(53.5,"FW","High", "Past",
+      35.9,"FW","High", "Present",
+      33.4,"FW","Intermediate", "Past",
+      27.4,"FW","Intermediate", "Present",
+      12.7,"FW","Low", "Past",
+      14,"FW","Low", "Present")
+
+d2<-c(27.0,"WBP","High", "Present",
+      35.9,"FW","High", "Present",
+      22.0,"WBF","Intermediate", "Present",
+      27.4,"FW","Intermediate", "Present"  #,
+      # 14,"FW","Low", "Present",
+      # 12.6, "WF", "Low", "Present"
+      )
+
+d11<-as.data.frame(matrix(d1, ncol=4, byrow = 2))
+
+colnames(d11)<-c("Erosion", "Rotation","Zone","Period")
+d11$Erosion<-round(as.numeric(d11$Erosion),0)
+d11$Zone<-as.factor(d11$Zone)
+d11$Period<-as.factor(d11$Period)
+
+d22<-as.data.frame(matrix(d2, ncol=4, byrow = 2))
+
+colnames(d22)<-c("Erosion", "Rotation","Zone","Period")
+d22$Erosion<-round(as.numeric(d22$Erosion),0)
+d22$Zone<-as.factor(d22$Zone)
+d22$Period<-as.factor(d22$Period)
+
+
+
+#Climate effects
+ggplot(d11, aes(fill = Period, x = Zone, y = Erosion))+geom_bar(position = "dodge", stat = "identity")+
+  # facet_wrap(~Zone+Time, ncol= 2)+
+  # facet_grid(rows = vars(Zone), cols = vars(Time), space = "free_x", scales = "free_x")+
+  # scale_fill_manual(values = rot_clr)+
+    labs(y = expression(paste("Erosion t  ", ha^-1)))+
+  my_custom_themes+
+ theme(axis.text.x.bottom = element_text(angle = 0, hjust = 0.5, size = 25),
+        axis.title.y = element_text(size = 25),
+        axis.text.y = element_text(size = 30),
+        axis.text.x = element_text(size =30, face = "bold", color = "black"))+
+  theme(strip.text.x = element_text(size =25), legend.position = c(0.99,0.99), legend.text = element_text(size=35))+
+ geom_text(aes(y =Erosion+2, label = Erosion),position = position_dodge(width = 1), check_overlap = TRUE, size = 20, fontface = "bold")
+
+# ggsave("climateeffect1.eps", height = 8, width = 10)
+#Management effects
+
+rot_ord5<-c("FW", "WBP","WBF")
+d22$Rotation<-factor(d22$Rotation, levels = rot_ord5)
+rot_clr2<-c("#fc9272", "#006d2c", "#31a354","#74c476","#045a8d","#2b8cbe","#a6bddb")
+ggplot(d22, aes(fill = Rotation, x = Zone, y = Erosion))+geom_bar(position = "dodge", stat = "identity")+
+  # facet_wrap(~Zone+Time, ncol= 2)+
+  # facet_grid(cols = vars(Zone), space = "free_x", scales = "free_x")+
+  scale_fill_manual(values = rot_clr2)+
+    labs(y = expression(paste("Erosion t  ", ha^-1)))+
+  my_custom_themes+
+  theme(axis.text.x.bottom = element_text(angle = 0, hjust = 0.5, size = 25),
+        axis.title.y = element_text(size = 25),
+        axis.text.y = element_text(size = 30),
+        axis.text.x = element_text(size =30, face = "bold", color = "black"))+
+  theme(strip.text.x = element_text(size =25), legend.position = c(0.99,0.99), legend.text = element_text(size=35))+
+ geom_text(aes(y =Erosion+2, label = Erosion),position = position_dodge(width = 1), check_overlap = TRUE, size = 20, fontface = "bold")
+# ggsave("management_effect22.eps", height = 8, width = 10)
+
+```
+
+
+
+# Yearly Erosion Past
+
+```{r, echo=FALSE}
+
+Er_ag_yearly$Facets<- paste0(Er_ag_yearly$Zone,"-",Er_ag_yearly$Time,"-",Er_ag_yearly$Tillage)
+Er_ag_yearly_past<-Er_ag_yearly[Er_ag_yearly$Time=="Past",]
+ggplot(Er_ag_yearly_past, aes(WY, Sed..Det...t.ha., color=Rotation))+geom_point()+geom_line()+facet_wrap(~Facets, scales = "free", ncol = 1)+my_custom_themes+theme(legend.position = "right", strip.text.x = element_text(size =10))
+
+
+# mavg<-ma(Er_ag_yearly_past$Sed..Det...t.ha., 5)
+
+```
+
+# Yearly Erosion Present
+
+
+## Intense Tillage
+
+Year 1995 was a Wheat year in PWB rotation. In the end of Pea year, various tillage for wheat is done which increases the soil erodibility which must of caused high erosion in this year when coupled with above average precipitation of this year.
+
+```{r, echo=FALSE}
+
+# Er_ag_yearly$Facets<- paste0(Er_ag_yearly$Zone,"-",Er_ag_yearly$Time,"-",Er_ag_yearly$Tillage)
+Er_ag_yearly_present<-Er_ag_yearly[Er_ag_yearly$Time=="Present",]
+Er_ag_yearly_present_int<-Er_ag_yearly_present[Er_ag_yearly_present$Tillage=="Intense",]
+ggplot(Er_ag_yearly_present_int, aes(WY, Sed..Det...t.ha., color=Rotation))+geom_point()+geom_line()+facet_wrap(~Facets, scales = "free", ncol = 1)+my_custom_themes+theme(legend.position = "right", strip.text.x = element_text(size =10))
+
+#mat_last[mat_last$Rotation=="PWB"&mat_last$Tillage=="Intense"&mat_last$WY==1995,]
+
+```
+
+## Reduced Tillage
+
+```{r, echo=FALSE}
+
+# Er_ag_yearly$Facets<- paste0(Er_ag_yearly$Zone,"-",Er_ag_yearly$Time,"-",Er_ag_yearly$Tillage)
+Er_ag_yearly_present<-Er_ag_yearly[Er_ag_yearly$Time=="Present",]
+Er_ag_yearly_present_red<-Er_ag_yearly_present[Er_ag_yearly_present$Tillage=="Reduced",]
+ggplot(Er_ag_yearly_present_red, aes(WY, Sed..Det...t.ha., color=Rotation))+geom_point()+geom_line()+facet_wrap(~Facets, scales = "free", ncol = 1)+my_custom_themes+theme(legend.position = "right", strip.text.x = element_text(size =10))
+
+
+```
+
+
+
+## No Tillage
+
+
+```{r, echo=FALSE}
+
+# Er_ag_yearly$Facets<- paste0(Er_ag_yearly$Zone,"-",Er_ag_yearly$Time,"-",Er_ag_yearly$Tillage)
+Er_ag_yearly_present<-Er_ag_yearly[Er_ag_yearly$Time=="Present",]
+Er_ag_yearly_present_nt<-Er_ag_yearly_present[Er_ag_yearly_present$Tillage=="Notill",]
+ggplot(Er_ag_yearly_present_nt, aes(WY, Sed..Det...t.ha., color=Rotation))+geom_point()+geom_line()+facet_wrap(~Facets, scales = "free", ncol = 1)+my_custom_themes+theme(legend.position = "right", strip.text.x = element_text(size =10))
+
+# install.packages("forecast")
+
+```
+
+
+
+# Average of rotation order
+
+WEPP results from various rotation order was combined for each zone for both time period for their unique tillage intensities.
+
+```{r, echo=FALSE}
+
+### first remove FW from present high and intermediate zones ###
+
+dAA1<-which(data_er$Zone=="High"&data_er$Time=="Present"&data_er$Rotation=="FW")
+dAA2<-which(data_er$Zone=="Inter"&data_er$Time=="Present"&data_er$Rotation=="FW")
+
+data_er_wo_fw_in_present<-data_er[c(-dAA1,-dAA2),]
+
+Er_daily_comb_rot<-aggregate(cbind(Sed..Det...t.ha.,ET,Precip.mm.,Rain...Melt..mm.,Runoff..mm.,Percolation..mm.,Lateral.Flow..mm., Storage..mm.)~Year+WY+Month+Day+Zone+Time+Tillage+Method, data_er_wo_fw_in_present, mean)
+Er_yearly_sm_comb_rot<-aggregate(cbind(Storage..mm.)~WY+Zone+Time+Tillage+Method, Er_daily_comb_rot, mean)
+Er_yearly_comb_rot<-aggregate(cbind(Sed..Det...t.ha.,ET,Precip.mm.,Rain...Melt..mm.,Runoff..mm.,Percolation..mm.,Lateral.Flow..mm.)~WY+Zone+Time+Tillage+Method, Er_daily_comb_rot, sum)
+
+Er_yearly_comb_rot_avg<-aggregate(cbind(Sed..Det...t.ha.,ET,Precip.mm.,Rain...Melt..mm.,Runoff..mm.,Percolation..mm.,Lateral.Flow..mm.)~Zone+Time+Tillage+Method, Er_yearly_comb_rot, mean)
+Er_yearly_sm_comb_rot_avg<-aggregate(cbind(Storage..mm.)~Zone+Time+Tillage+Method,Er_yearly_sm_comb_rot, mean)
+Er_yearly_comb_rot_avg <- merge(Er_yearly_comb_rot_avg,Er_yearly_sm_comb_rot_avg,c("Zone","Tillage","Time","Method"))
+
+Er_yearly_comb_rot_avg$ro_per<- round((Er_yearly_comb_rot_avg$Runoff..mm./Er_yearly_comb_rot_avg$Rain...Melt..mm.)*100,2)
+Er_yearly_comb_rot_avg$et_per<- round((Er_yearly_comb_rot_avg$ET/Er_yearly_comb_rot_avg$Rain...Melt..mm.)*100,2)
+Er_yearly_comb_rot_avg$perc_per<- round((Er_yearly_comb_rot_avg$Percolation..mm./Er_yearly_comb_rot_avg$Rain...Melt..mm.)*100,2)
+Er_yearly_comb_rot_avg$lf_per<- round((Er_yearly_comb_rot_avg$Lateral.Flow..mm./Er_yearly_comb_rot_avg$Rain...Melt..mm.)*100,2)
+kable(round_df(Er_yearly_comb_rot_avg,2))
+
+Er_yearly_comb_rot_avg<-round_df(Er_yearly_comb_rot_avg,1)
+till_ord<-c("Intense","Reduced","Notill")
+
+Er_yearly_comb_rot_avg$Tillage<-factor(Er_yearly_comb_rot_avg$Tillage, levels = till_ord)
+
+ggplot(Er_yearly_comb_rot_avg, aes(fill = Time, x = Tillage, y = Sed..Det...t.ha.))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~Zone, ncol= 1)+my_custom_themes+theme(strip.text.x = element_text(size = 16), legend.position = c(0.99,0.999))+
+  labs(y = expression(paste("Erosion t  ", ha^-1)))+
+ geom_text(aes(y =Sed..Det...t.ha., label = Sed..Det...t.ha.),position = position_dodge(width = 1), check_overlap = TRUE, size = 7)
+#ggsave("tillage_comb_avg_erosion.eps", height = 10, width = 08)
+
+
+```
+
+
+# Temporal Variability 
+
+```{r, echo=FALSE}
+
+leveler2<-function(a){
+if (a == "Low") {
+  b = "(a)"
+} else if (a == "Inter") {
+  b = "(b)"
+} else {
+  b = "(c)"
+}
+return(b)
+}
+
+Er_yearly_comb_rot$plotlevels<-mapply(leveler2, Er_yearly_comb_rot$Zone)
+
+Er_yearly_comb_rot$Zone<-factor(Er_yearly_comb_rot$Zone,
+                                               levels=c("Low","Inter","High"))
+
+Er_yearly_comb_rot$Tillage<-factor(Er_yearly_comb_rot$Tillage, levels = c("Intense","Reduced","Notill"), labels = c("Intense","Reduced","No-till"))
+
+shp<-c("Intense"=16, "Reduced"=17,"No-till"=1)
+
+# clr <- c("Intense"="#d95f0e", "Reduced"="#3182bd","Notill"="#31a354")
+clr<-c("Intense"="black", "Reduced"="grey40","No-till"="#636363")   #969696
+tps<-c("Intense"="solid", "Reduced"="solid","No-till"="twodash")
+ggplot(Er_yearly_comb_rot, aes(WY, Sed..Det...t.ha., color=Tillage))+
+  geom_point(aes(shape= Tillage))+
+  geom_line(aes(linetype = Tillage))+facet_wrap(~Zone, scales = "free_y", ncol = 1)+
+  scale_color_manual(values=clr)+
+  scale_linetype_manual(values = tps)+
+  scale_shape_manual(values = shp)+
+  # limits = c(1940,2020),
+  scale_x_continuous(n.breaks = 20)+
+  scale_y_continuous(n.breaks = 6)+
+  geom_vline(xintercept = 1982, linetype = "dashed")+
+  # geom_segment(aes(x = 1982, y=25, xend=1982, yend=))
+  geom_text(data=Er_yearly_comb_rot,
+            mapping = aes(x = -Inf-1, y = Inf, label = plotlevels),
+            # aes(x = 1940,y = 70, label = plotlevels),
+            # nudge_y = 2000,
+            label_padding = 0.5,
+            vjust = 2,
+            hjust = -0.5,
+            color = "black", size =7,
+            # fontface = "bold",
+            show.legend = FALSE)+
+  
+   # ylab("Erosion (t/ha)")+
+  labs(y = expression(paste("Erosion Mg  ", ha^-1)))+
+  xlab("Year")+
+  my_custom_themes+theme(strip.text.x = element_blank(), legend.position = c(0.999,0.999), legend.direction = "horizontal")+
+  theme(legend.text = element_text(size =20))+
+ggh4x::facetted_pos_scales(y = list(
+  Zone == "Low" ~ scale_y_continuous(limits = c(0, 60)),
+  Zone == "Inter" ~ scale_y_continuous(limits = c(0, 100))
+  # Zone == "High" ~ scale_y_continuous(limits = c(0, 20))
+  ))
+
+#ggsave("separate_tillage_combined_rotation_yearly.eps", height = 8, width = 10)
+
+
+```
+### Mean comparison
+
+
+```{r, include=FALSE}
+
+er_only_int <- Er_yearly_comb_rot[Er_yearly_comb_rot$Tillage=="Intense",]
+
+
+ggplot(er_only_int, aes(x=Sed..Det...t.ha. ))+geom_histogram(binwidth = 10)+
+  facet_wrap(~Zone+Time, ncol = 2)
+
+
+
+er_only_int$Sed..Det...t.ha.
+
+################### STATISTICAL ANALYSIS ##########
+
+er_only_int_mn_comp<-er_only_int %>%
+  nest(data = c(-Zone))%>%
+  mutate(Shapirotest = map(data, ~shapiro.test(.$Sed..Det...t.ha.)),
+         ttest= map(data, ~t.test(Sed..Det...t.ha.~Time, data = .)),
+         wilcoxtest = map(data, ~wilcox.test(Sed..Det...t.ha.~Time, data = .)),
+         W = round(map_dbl(Shapirotest, "statistic"),2),
+         Shapiro_p_value = round(map_dbl(Shapirotest, "p.value"),5),
+         difference = round(map_dbl(ttest, get_ttest_estimate),3),
+         # Change = as.character(map_dbl(ttest, change)),
+         t_stat = round(map_dbl(ttest, "statistic"),3),
+         t_p_value = round(map_dbl(ttest, "p.value"),3),
+         wilcox_stat = round(map_dbl(wilcoxtest, "statistic"),3),
+         wilcox_p_value= round(map_dbl(wilcoxtest, "p.value"),3))
+
+
+er_only_int_trend_ana<-er_only_int %>%
+  nest(data = c(-Zone))%>%
+  mutate(mean= map(data,~signif(mean(.$Sed..Det...t.ha.),3)),
+         sd= map(data,~signif(sd(.$Sed..Det...t.ha.),3)),
+         Shapirotest = map(data, ~shapiro.test(.$Sed..Det...t.ha.)),
+         LMtest= map(data, ~lm(Sed..Det...t.ha.~WY, data = .)),
+         mKtest = map(data, ~MannKendall(.$Sed..Det...t.ha.)),
+         senslp = map(data,~sens.slope(.$Sed..Det...t.ha.)),
+         W = round(map_dbl(Shapirotest, "statistic"),2),
+         Shapiro_p_value = round(map_dbl(Shapirotest, "p.value"),2),
+         intercept = map_dbl(LMtest, get_intercept),
+         slope = map_dbl(LMtest, get_slope),
+         LM_p_value = map_dbl(LMtest, get_p_value),
+         Adj_r_squared = map_dbl(LMtest, get_r_squared),
+         MK_tau = round(map_dbl(mKtest, "tau"),5),
+         MK_p_value = round(map_dbl(mKtest, "sl"),3),
+         sen_slope = round(map_dbl(senslp, "estimates"),3))
+
+
+# clidata_FT_agg_fitted$Changes<-mapply(change, per_fitted_t_yearly$ttest)
+er_only_int_trend_ana2<-select(er_only_int_trend_ana, -c("LMtest","mKtest","Shapirotest","senslp","data"))
+kable(er_only_int_trend_ana2, caption = "Comparison of mean Analysis result")
+
+
+
+
+```
+
+
+
+## Combining tillage intensity
+
+Based on the tillage intensity proportion of the county erosion was combined.
+
+```{r, echo=FALSE}
+
+# till_per <- read.csv("F:/WORK/Project_2/WEPPwatershed/tillage_whitman_yearly.csv")
+# colnames(till_per)<-c("Year","Intense","Reduced","Notill")
+# forloop_present_alltill<- data_er_wo_fw_in_present[data_er_wo_fw_in_present$Time=="Present"&data_er_wo_fw_in_present$Tillage=="Intense",]
+# 
+# for (i in c(1:nrow(forloop_present_alltill))) {
+#   #i = 1
+#   y= forloop_present_alltill$WY[i]
+#   m = forloop_present_alltill$Month[i]
+#   d= forloop_present_alltill$Day[i]
+#   z = forloop_present_alltill$Zone[i]
+#   r = forloop_present_alltill$Rotation[i]
+#   mat<-data_er_wo_fw_in_present[data_er_wo_fw_in_present$WY==y&data_er_wo_fw_in_present$Month==m&
+#                                   data_er_wo_fw_in_present$Day==d&data_er_wo_fw_in_present$Zone==z&
+#                                   data_er_wo_fw_in_present$Rotation==r,]
+# 
+#   wts<-till_per[till_per$Year==y,]
+# 
+#   w1<-as.numeric(wts[mat$Tillage[1]])
+#   w2<-as.numeric(wts[mat$Tillage[2]])
+#   w3<-as.numeric(wts[mat$Tillage[3]])
+#   agmat<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Month+Day+Zone+Rotation+Time,mat,weighted.mean, w= c(w1,w2,w3))
+# 
+#   if (i==1){
+#     daily_matpresent<-matrix(NA, nrow = 0, ncol=ncol(agmat))
+#     colnames(daily_matpresent)<-agmat
+#   }
+# 
+#   daily_matpresent<-rbind(daily_matpresent,agmat)
+# 
+# }
+# 
+# daily_matpast<-data_er_wo_fw_in_present[data_er_wo_fw_in_present$Time=="Past",]
+# 
+# daily_matpast<-daily_matpast[,colnames(daily_matpresent)]
+# data_mat_all<-rbind(daily_matpast,daily_matpresent)
+# write.csv(data_mat_all,"After_till_comb_rot_past_present_daily_erosion_with_altrot.csv", row.names = F)
+
+```
+
+After Tillage intensity is combined, following Erosion value is obtained for three zones for different rotation orders.
+
+```{r, echo=FALSE}
+
+
+data_mat_all<-read.csv("After_till_comb_rot_past_present_daily_erosion_with_altrot.csv")
+
+daily_matpresent_yearly_comb_till<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Zone+Time+Rotation, data_mat_all, sum)
+
+
+# Er_yearly_comb_rot<-aggregate(cbind(Sed..Det...t.ha.,ET,Precip.mm.,Rain...Melt..mm.,Runoff..mm.)~WY+Zone+Time+Tillage+Method, daily_matpresent, sum)
+
+daily_matpresent_yearly_comb_till_avg<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Zone+Time+Rotation, daily_matpresent_yearly_comb_till, mean)
+
+agg_matpresent__comb_rot_till_avg<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Zone+Time, daily_matpresent_yearly_comb_till_avg, mean)
+
+kable(daily_matpresent_yearly_comb_till_avg)
+```
+
+
+## Mean comparison of past vs present combined erosion
+
+```{r, echo=FALSE}
+
+### All tillage is combined... All rotation is combined based on equal proportion for the two periods
+
+## denoting this as all_comb_erosion
+all_comb_erosion_yearly<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Zone+Time, daily_matpresent_yearly_comb_till, mean)
+
+all_comb_erosion_yearly_avg<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Zone+Time, all_comb_erosion_yearly, mean)
+
+kable(all_comb_erosion_yearly_avg)
+
+
+ggplot(all_comb_erosion_yearly, aes(x=Sed..Det...t.ha. ))+geom_histogram(binwidth = 20)+
+  # geom_density(alpha=.2, fill="#FF6666") +
+  facet_wrap(~Zone+Time, ncol = 2)
+  
+
+###### Statistical Analysis ######
+
+
+er_comb_mn_comp<-all_comb_erosion_yearly%>%
+  nest(data = c(-Zone))%>%
+  mutate(Shapirotest = map(data, ~shapiro.test(.$Sed..Det...t.ha.)),
+         ttest= map(data, ~t.test(Sed..Det...t.ha.~Time, data = .)),
+         wilcoxtest = map(data, ~wilcox.test(Sed..Det...t.ha.~Time, data = .)),
+         W = round(map_dbl(Shapirotest, "statistic"),2),
+         Shapiro_p_value = round(map_dbl(Shapirotest, "p.value"),5),
+         difference = round(map_dbl(ttest, get_ttest_estimate),3),
+         # Change = as.character(map_dbl(ttest, change)),
+         t_stat = round(map_dbl(ttest, "statistic"),3),
+         t_p_value = round(map_dbl(ttest, "p.value"),3),
+         wilcox_stat = round(map_dbl(wilcoxtest, "statistic"),3),
+         wilcox_p_value= round(map_dbl(wilcoxtest, "p.value"),3))
+
+
+er_comb_trend_ana<-all_comb_erosion_yearly %>%
+  nest(data = c(-Zone))%>%
+  mutate(mean= map(data,~signif(mean(.$Sed..Det...t.ha.),3)),
+         sd= map(data,~signif(sd(.$Sed..Det...t.ha.),3)),
+         Shapirotest = map(data, ~shapiro.test(.$Sed..Det...t.ha.)),
+         LMtest= map(data, ~lm(Sed..Det...t.ha.~WY, data = .)),
+         mKtest = map(data, ~MannKendall(.$Sed..Det...t.ha.)),
+         senslp = map(data,~sens.slope(.$Sed..Det...t.ha.)),
+         W = round(map_dbl(Shapirotest, "statistic"),2),
+         Shapiro_p_value = round(map_dbl(Shapirotest, "p.value"),2),
+         intercept = map_dbl(LMtest, get_intercept),
+         slope = map_dbl(LMtest, get_slope),
+         LM_p_value = map_dbl(LMtest, get_p_value),
+         Adj_r_squared = map_dbl(LMtest, get_r_squared),
+         MK_tau = round(map_dbl(mKtest, "tau"),5),
+         MK_p_value = round(map_dbl(mKtest, "sl"),3),
+         sen_slope = round(map_dbl(senslp, "estimates"),3))
+
+
+# clidata_FT_agg_fitted$Changes<-mapply(change, per_fitted_t_yearly$ttest)
+er_comb_trend_ana2<-select(er_comb_trend_ana, -c("LMtest","mKtest","Shapirotest","senslp","data"))
+kable(er_comb_trend_ana2, caption = "Comparison of mean Analysis result")
+
+
+
+
+
+```
+
+
+
+
+```{r, echo=FALSE}
+
+daily_matpresent_yearly_comb_till$Zone<-factor(daily_matpresent_yearly_comb_till$Zone,
+                                               levels=c("Low","Inter","High"))
+
+clr <- c("WBP"="#3182bd", "BPW"="#8856a7","PWB"="#31a354","WBF"="#3182bd", "BFW"="#8856a7","FWB"="#31a354", "FW" = "#d95f0e", "WF" = "#fec44f")
+clr2<-c("WBP"="Black", "BPW"="#636363","PWB"="#cccccc","WBF"="Black", "BFW"="#636363","FWB"="#cccccc", "FW" = "#636363", "WF" = "#252525")
+lt2<-c("WBP"="solid", "BPW"="solid","PWB"="solid","WBF"="solid", "BFW"="solid","FWB"="solid", "FW" = "twodash", "WF" = "twodash")
+ggplot(daily_matpresent_yearly_comb_till, aes(WY, Sed..Det...t.ha., color=Rotation))+geom_point()+geom_line(aes(linetype = Rotation))+facet_wrap(~Zone, scales = "free", ncol = 1)+
+  scale_color_manual(values=clr2)+
+  scale_linetype_manual(values=lt2)+
+  my_custom_themes+
+  labs(y = expression(paste("Erosion t  ", ha^-1)))+
+  theme(legend.position = "right", strip.text.x = element_text(size =15))
+
+### Need to calculate difference in erosion for difference rot order ######
+
+agg_max<-aggregate(Sed..Det...t.ha.~WY+Zone+Time, daily_matpresent_yearly_comb_till, max)
+agg_min<-aggregate(Sed..Det...t.ha.~WY+Zone+Time, daily_matpresent_yearly_comb_till, min)
+
+agg_all<-merge(agg_max, agg_min, by = c("WY","Zone","Time"))
+agg_all$diff<-agg_all$Sed..Det...t.ha..x-agg_all$Sed..Det...t.ha..y
+
+# ggsave("yearly_erosion_combined_tillage_separate_rotations_bw.eps", height = 8, width = 8)
+
+```
+
+
+# Combining both tillage and rotation 
+
+Erosion in the present is much lower than erosion in the past. 
+
+```{r, echo=FALSE}
+
+daily_matpresent_comb_till_rot<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Month+Day+Zone+Time, data_mat_all, mean)
+
+monthly_matpresent_comb_till_rot<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Month+Zone+Time, daily_matpresent_comb_till_rot, sum)
+
+monthly_matpresent_comb_till_rot_avg<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Month+Zone+Time, monthly_matpresent_comb_till_rot, mean)
+
+monthly_matpresent_comb_till_rot_avg_avg<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Zone+Time, monthly_matpresent_comb_till_rot_avg, sum)
+
+
+monthly_matpresent_comb_till_rot_avg$Month<-factor(month.abb[monthly_matpresent_comb_till_rot_avg$Month], levels = month.abb)
+
+month_order=c("Oct","Nov","Dec","Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep")
+
+monthly_matpresent_comb_till_rot_avg$Month_wy<-factor(monthly_matpresent_comb_till_rot_avg$Month,levels =month_order)
+cl2 <- c("Past" = "#252525","Present" = "#969696")
+
+ggplot(monthly_matpresent_comb_till_rot_avg, aes(fill = Time, x = Month_wy, y = Sed..Det...t.ha.))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~Zone, ncol = 1)+
+  scale_fill_manual(values = cl2)+
+  # ggtitle("Compare monthly erosion past and present")+
+# ylab("Erosion (t/ha)")+
+labs(y = expression(paste("Erosion t  ", ha^-1)))+  #, yr^-1
+  my_custom_themes + theme(strip.text.x = element_text(size=15), legend.position = c(0.999,0.999))
+  
+# ggsave('Overall_monthly_withaltrots_bw.eps')
+
+```
+
+## Only Wheat fallow comparison monthly 
+
+```{r, echo=FALSE}
+
+dBB1<-which(data_er$Zone=="High"&data_er$Time=="Past"&data_er$Rotation=="FW")
+dBB2<-which(data_er$Zone=="Inter"&data_er$Time=="Past"&data_er$Rotation=="WF")
+dBB3<-which(data_er$Zone=="Low"&data_er$Time=="Past"&data_er$Rotation=="WF")
+dBB4<-which(data_er$Zone=="High"&data_er$Time=="Present"&data_er$Rotation=="FW"&data_er$Tillage=="Intense")
+dBB5<-which(data_er$Zone=="Inter"&data_er$Time=="Present"&data_er$Rotation=="FW"&data_er$Tillage=="Intense")
+dBB6<-which(data_er$Zone=="Low"&data_er$Time=="Present"&data_er$Rotation=="FW"&data_er$Tillage=="Intense")
+
+d_er_only_fw<-data_er[c(dBB1,dBB2, dBB3, dBB4, dBB5, dBB6),]
+
+# d-er_onlyfw<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Month+Day+Zone+Time, d_er_only_fw, mean)
+
+monthly_d_er_only_fw<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Month+Zone+Time, d_er_only_fw, sum)
+
+monthly_d_er_only_fw_avg<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Month+Zone+Time, monthly_d_er_only_fw, mean)
+
+monthly_d_er_only_fw_avg$Month<-factor(month.abb[monthly_d_er_only_fw_avg$Month], levels = month.abb)
+
+
+ggplot(monthly_d_er_only_fw_avg, aes(fill = Time, x = Month, y = Sed..Det...t.ha.))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~Zone, ncol = 1)+ggtitle("Only WF rotation")
+# ggsave('Overall_monthly_withaltrots.eps')
+
+
+# cowplot::plot_grid(pA,pB)
+
+```
+
+
+
+
+# Erosion by crop year 
+
+Pea year also produced second highest erosion in high precipitation zone. This is because the end of pea year has wheat tillage operation.
+
+```{r, echo=FALSE, include=FALSE}
+##### Need to do a small bit of patching of another error here #####
+
+### The WF and FW rotation both are wrongly named... As a result for the low and inter zone in past period,
+## THE CROP YEAR IS MIS PLACED 
+## USE LAPPLY TO REPLACE W with F and F with W for these
+
+dBBA<-which(data_er_wo_fw_in_present$Zone!="High"&data_er_wo_fw_in_present$Time=="Past")
+
+d_rot_corrected <- data_er_wo_fw_in_present
+
+for (d in dBBA){
+  
+  #d= dBBA[1]
+  if(d_rot_corrected[d,'CropYear']=="F"){
+    d_rot_corrected[d,'CropYear']="W"
+  }else{
+    d_rot_corrected[d,'CropYear']="F"
+  }
+}
+#########################################################################
+
+ data_er_wo_fw_in_present<-d_rot_corrected
+
+```
+
+
+```{r, echo=FALSE, include=FALSE}
+
+# data_er_wo_fw_in_present_monthly<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Month+CropYear+Rotation+Zone+Time+Tillage, data_er_wo_fw_in_present, sum)
+# 
+# data_er_wo_fw_in_present_monthly_avg<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Month+CropYear+Rotation+Zone+Time+Tillage, data_er_wo_fw_in_present_monthly, mean)
+# 
+# data_er_wo_fw_in_present_monthly_avg2<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Month+CropYear+Zone+Time+Tillage, data_er_wo_fw_in_present_monthly_avg, mean)
+# 
+# data_er_wo_fw_in_present_monthly_avg2$Month<-factor(month.abb[data_er_wo_fw_in_present_monthly_avg2$Month], levels = month.abb)
+# 
+# data_er_wo_fw_in_present_monthly_avg2$facets <- paste0(data_er_wo_fw_in_present_monthly_avg2$Zone,"-",data_er_wo_fw_in_present_monthly_avg2$Time,"-",data_er_wo_fw_in_present_monthly_avg2$Tillage)
+# 
+# ggplot(data_er_wo_fw_in_present_monthly_avg2, aes(fill = CropYear, x = Month, y = Sed..Det...t.ha.))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~facets, ncol = 4)+my_custom_themes+theme(strip.text.x = element_text(size = 16))
+
+```
+
+## Erosion
+
+```{r, echo=FALSE}
+
+data_er_wo_fw_in_present_monthly<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~WY+Month+CropYear+Rotation+Zone+Time+Tillage, data_er_wo_fw_in_present, sum)
+
+data_er_wo_fw_in_present_monthly_avg2<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Month+CropYear+Zone+Time+Tillage, data_er_wo_fw_in_present_monthly, mean)
+cl4 <- c("W"="Black","B"="#636363","P"="#969696","F"="Black")
+fl4<-c("W"="Black","B"="#636363","P"="#969696","F"="white")
+
+# data_er_wo_fw_in_present_monthly_avg2<-aggregate(cbind(Sed..Det...t.ha.,ET,Runoff..mm.)~Month+CropYear+Zone+Time+Tillage, data_er_wo_fw_in_present_monthly_avg, mean)
+
+data_er_wo_fw_in_present_monthly_avg2$Month<-factor(month.abb[data_er_wo_fw_in_present_monthly_avg2$Month], levels = month.abb)
+
+month_labs = c("O","N","D","J","F","M","A","M","J","J","A","S")
+
+data_er_wo_fw_in_present_monthly_avg2$Zone<-factor(data_er_wo_fw_in_present_monthly_avg2$Zone, levels = c("Low","Inter","High"))
+
+data_er_wo_fw_in_present_monthly_avg2$Month_wy<-factor(data_er_wo_fw_in_present_monthly_avg2$Month,
+                                                       levels = month_order)
+                                                       # labels = c("O","N","D","J",
+                                                       #            "F","M","A","M",
+                                                       #            "J","J","A","S"))
+data_er_wo_fw_in_present_monthly_avg2$facets <- paste0(data_er_wo_fw_in_present_monthly_avg2$Zone,"-",data_er_wo_fw_in_present_monthly_avg2$Time,"-",data_er_wo_fw_in_present_monthly_avg2$Tillage)
+
+#### time tillage combo
+data_er_wo_fw_in_present_monthly_avg2$newfacets <- paste0(data_er_wo_fw_in_present_monthly_avg2$Time,"-",data_er_wo_fw_in_present_monthly_avg2$Tillage)
+
+newfacets_ord<-c("Past-Intense","Present-Intense","Present-Reduced","Present-Notill")
+
+data_er_wo_fw_in_present_monthly_avg2$newfacets<-factor(data_er_wo_fw_in_present_monthly_avg2$newfacets,
+                                                        levels = newfacets_ord)
+
+unique(data_er_wo_fw_in_present_monthly_avg2$facets)
+facet_ord<-c( "Low-Past-Intense","Low-Present-Intense","Low-Present-Reduced", "Low-Present-Notill",
+      "Inter-Past-Intense","Inter-Present-Intense","Inter-Present-Reduced","Inter-Present-Notill",
+  "High-Past-Intense", "High-Present-Intense","High-Present-Reduced","High-Present-Notill" )
+
+
+facet_labels<-c("(a)","(b)","(c)","(d)",
+                "(e)","(f)","(g)","(h)",
+                "(i)","(j)","(k)","(l)")
+crp_ord<-c("W","B","P","F")
+crop_labels<-c("Wheat","Barley","Pea","Fallow")
+
+data_er_wo_fw_in_present_monthly_avg2$CropYear<-factor(data_er_wo_fw_in_present_monthly_avg2$CropYear, levels = crp_ord, labels = crop_labels)
+
+cl4 <- c("Wheat"="Black","Barley"="#636363","Pea"="Black","Fallow"="Black")
+fl4<-c("Wheat"="Black","Barley"="#636363","Pea"="White","Fallow"="white")
+patt4<-c("Wheat"="none","Barley"="none","Pea"="stripe","Fallow"="none")
+######### providing labels to each individual facet ################
+
+# dat[facets == c("a","b","c","d"),y_min := 0]
+# dat[facets == c("a","b","c","d"),y_min := 0]
+# data_er_wo_fw_in_present_monthly_avg2[,facets == "i)",y_min := 0]
+# data_er_wo_fw_in_present_monthly_avg2[facets == c("i)","j)","k)","l)"),y_max == 10]
+
+# install.packages("ggpattern")
+library(ggpattern)
+#install.packages("facetscales")
+
+# install.packages("reprex")
+
+
+data_er_wo_fw_in_present_monthly_avg2$facets<-factor(data_er_wo_fw_in_present_monthly_avg2$facets, levels = facet_ord, labels = facet_labels)
+ggplot(data_er_wo_fw_in_present_monthly_avg2, aes(fill = CropYear,color=CropYear, x = Month_wy, y = Sed..Det...t.ha., pattern = CropYear))+
+  geom_bar(position = "dodge", stat = "identity")+
+  geom_bar_pattern(position = "dodge", stat = "identity",
+                   color = "black",
+                   pattern_fill = "black", 
+                   pattern_angle = 45, 
+                   pattern_density = 0.1,
+                   pattern_spacing = 0.025,
+                   pattern_key_scale_factor = 0.6)+
+  facet_grid(rows = vars(Zone), cols = vars(newfacets), scales = "free_y")+
+  # facet_wrap(~facets, ncol = 4, scales = "free_y", space ="free")+
+  scale_fill_manual(values=fl4)+
+  scale_color_manual(values=cl4)+
+  scale_pattern_manual(values = patt4)+
+  geom_text(data_er_wo_fw_in_present_monthly_avg2, 
+            mapping = aes(Inf, Inf, label = facets),size = 12,
+            # mapping = aes(x = 10, y = 10, label = facets), size = 12,
+           vjust = 1.4,
+           hjust = 1.2,
+            show.legend = F)+
+  scale_y_continuous(n.breaks = 6)+
+  my_custom_themes+theme(
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank(), 
+    # strip.text.x = element_text(size = 18),
+    axis.title.x = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+    
+    axis.text.y.left = element_text(size = 26),
+                         axis.text.x.bottom = element_text(angle = 0,hjust = 1, size = 20, face = "italic"))+
+  # annotate('text', label = letters[1:12], x = 10,y = 20)+
+  xlab("Month")+
+  
+  theme(legend.position = c(0.88,0.98),
+        legend.text = element_text(size = 24))+
+  theme(panel.background = element_rect(fill = "white", color ="black"))+
+  scale_x_discrete( labels = month_labs)+
+  # scale_x_continuous(breaks = 1:12, labels = month_labs)+
+  # scale_x_date(labels = month_labs)+
+  labs(y = expression(paste("Erosion t  ", ha^-1)), x = "Month") +#, yr^-1  "#f7f7f7"  "#cccccc"
+
+  ggh4x::facetted_pos_scales(y = list(
+  Zone == "Low" ~ scale_y_continuous(limits = c(0, 8)),
+  # Zone == "Inter" ~ scale_y_continuous(limits = c(0, 16)),
+  Zone == "High" ~ scale_y_continuous(limits = c(0, 20))))
+
+  
+ #ggsave("monthly erosion by crop year_bw_news.eps", height = 12, width = 16)
+
+```
+
+```{r, include=FALSE}
+library(ggh4x)
+gg<- ggplot(data_er_wo_fw_in_present_monthly_avg2, aes(fill = CropYear,color=CropYear, x = Month_wy, y = Sed..Det...t.ha., pattern = CropYear))+
+  geom_bar(position = "dodge", stat = "identity")+
+  geom_bar_pattern(position = "dodge", stat = "identity",
+                   color = "black",
+                   pattern_fill = "black",
+                   pattern_angle = 45,
+                   pattern_density = 0.1,
+                   pattern_spacing = 0.025,
+                   pattern_key_scale_factor = 0.6)+
+  # facet_grid(rows = vars(Zone), cols = vars(newfacets), scales = "free")+
+  # facet_wrap(~Zone+newfacets, ncol = 4, scales = "free")+
+  facet_wrap(~facets, ncol = 4, scales ="free")+
+#    facet_nested(Zone ~ Time+Tillage)+
+#  facet_nested_wrap(~Time+Tillage, scales = "free")+
+  scale_fill_manual(values=fl4)+
+  scale_color_manual(values=cl4)+
+  scale_pattern_manual(values = patt4)+
+  geom_text(data_er_wo_fw_in_present_monthly_avg2, 
+            mapping = aes(Inf, Inf, label = facets),size = 12,
+            # mapping = aes(x = 10, y = 10, label = facets), size = 12,
+           vjust = 1.4,
+           hjust = 1.2,
+            show.legend = F)+
+  scale_y_continuous(n.breaks = 6)+
+  # coord_trans(y = "log10")+
+  # scale_y_log10()+
+  my_custom_themes+theme(
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank(),
+    # strip.text.x = element_text(size = 18),
+    # strip.background = element_rect(fill = NA, color = NA),
+    axis.title.x = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+  
+    axis.text.y.left = element_text(size = 26),
+                         axis.text.x.bottom = element_text(angle = 50,hjust = 1, size = 20))+
+  # annotate('text', label = letters[1:12], x = 10,y = 20)+
+  xlab("Month")+
+  
+  theme(legend.position = c(0.95,0.99),
+        legend.text = element_text(size = 24))+
+  theme(panel.background = element_rect(fill = "white", color ="black"))+
+  scale_x_discrete( labels = month_labs)+
+  # annotate("text", x = 5, y = 2, label = "Present", color = "black", size = 24)+
+  # scale_x_continuous(breaks = 1:12, labels = month_labs)+
+  # scale_x_date(labels = month_labs)+
+  labs(y = expression(paste("Erosion Mg  ", ha^-1)), x = "Month")+ #, yr^-1  "#f7f7f7"  "#cccccc"
+
+  ggh4x::facetted_pos_scales(y = list(
+  facets == "(a)" ~ scale_y_continuous(limits = c(0, 8), expand = c(0,0)),
+  facets == "(b)" ~ scale_y_continuous(limits = c(0, 8), expand = c(0,0)),
+    facets == "(c)" ~ scale_y_continuous(limits = c(0,6), expand = c(0,0)),
+  facets == "(d)" ~ scale_y_continuous(limits = c(0, 3), expand = c(0,0)),
+    facets == "(e)" ~ scale_y_continuous(limits = c(0, 16), expand = c(0,0)),
+  facets == "(f)" ~ scale_y_continuous(limits = c(0, 16), expand = c(0,0)),
+    facets == "(g)" ~ scale_y_continuous(limits = c(0, 10), expand = c(0,0), n.breaks = 6),
+  facets == "(h)" ~ scale_y_continuous(limits = c(0, 3), expand = c(0,0)),
+  facets == "(i)" ~ scale_y_continuous(limits = c(0, 20), expand = c(0,0)),
+    facets == "(j)" ~ scale_y_continuous(limits = c(0, 20), expand = c(0,0)),
+  facets == "(k)" ~ scale_y_continuous(limits = c(0, 6), expand = c(0,0)),
+  facets == "(l)" ~ scale_y_continuous(limits = c(0, 3), expand = c(0,0))
+  ))
+#gg
+
+```
+
+
+```{r, include=FALSE}
+
+library(cowplot)
+a1<-ggdraw() + draw_label(x=0.15, y=0.65,"Past", fontface='bold', size= 30, angle = 0)+
+  draw_line(x = c(0.08, 0.22), y = c(0.45,0.45), size = 1)+
+  # draw_label(x=0.15, y=0.45,"----------", size= 30, angle = 0)+
+  draw_label(x=0.15, y = 0.15, "Intense tillage", size = 26, angle = 0)+
+  draw_label(x=0.40, y = 0.15, "Intense tillage", size = 26, angle = 0)+
+  draw_label(x=0.64, y = 0.15, "Reduced tillage", size = 26, angle = 0)+
+  draw_label(x=0.87, y = 0.15, "No-till", size = 26, angle = 0)+
+   draw_line(x = c(0.44, 0.84), y = c(0.45,0.45), size = 1)+
+  # draw_label(x=0.64, y=0.45,"-----------------------------", size= 30, angle = 0)+
+  draw_label(x=0.64, y=0.65,"Present", fontface='bold', size= 30, angle = 0)
+
+a1
+gg
+
+p15<-plot_grid(a1, gg, nrow = 2, rel_heights = c(0.095,1.2))
+
+
+p15
+# dA<-data_er_wo_fw_in_present_monthly_avg2[data_er_wo_fw_in_present_monthly_avg2$Zone=="Low"]
+# dB<-data_er_wo_fw_in_present_monthly_avg2[data_er_wo_fw_in_present_monthly_avg2$Zone=="Intermediate"]
+# dC<-data_er_wo_fw_in_present_monthly_avg2[data_er_wo_fw_in_present_monthly_avg2$Zone=="High"]
+
+
+# ggsave("Trial_12_panel_5.eps", width = 20, height = 18)
+
+```
+
+```{r, include=FALSE}
+### only include high and intermediate zone and intense tillage
+
+
+data_er_wo_fw_in_present_monthly_avg2_half<-data_er_wo_fw_in_present_monthly_avg2[data_er_wo_fw_in_present_monthly_avg2$Zone!="Low"&data_er_wo_fw_in_present_monthly_avg2$Tillage=="Intense",]
+
+data_er_wo_fw_in_present_monthly_avg2_half$CropYear<-factor(data_er_wo_fw_in_present_monthly_avg2_half$CropYear, levels = c("W","B","P","F"))
+
+ggplot(data_er_wo_fw_in_present_monthly_avg2_half, aes(fill = CropYear,color=CropYear, x = Month_wy, y = Sed..Det...t.ha.))+
+  geom_bar(position = "dodge", stat = "identity")+
+  facet_wrap(~facets, ncol = 2)+
+  scale_fill_manual(values=fl4)+
+  scale_color_manual(values=cl4)+
+  
+  my_custom_themes+theme(strip.text.x = element_text(size = 25),
+                         axis.text.x.bottom = element_text(angle = 75, hjust = 1, size = 25),
+                         axis.title.y = element_text(size =25),
+                         axis.text = element_text(size=25, color = "black"))+
+  theme(legend.position = c(0.99,0.99))+
+  theme(panel.background = element_rect(fill = "white", color ="black"))+
+  labs(y = expression(paste("Erosion t  ", ha^-1)))
+
+
+# ggsave("monthly erosion by crop year_bw_no_low_only_Int.eps", height = 8, width = 12)
+
+```
+
+
+## ET
+
+```{r, echo=FALSE}
+
+ggplot(data_er_wo_fw_in_present_monthly_avg2, aes(fill = CropYear, x = Month, y = ET))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~facets, ncol = 4)+my_custom_themes+theme(strip.text.x = element_text(size = 16))
+
+
+
+```
+
+## Runoff
+
+```{r, echo=FALSE}
+
+ggplot(data_er_wo_fw_in_present_monthly_avg2, aes(fill = CropYear, x = Month, y = Runoff..mm.))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~facets, ncol = 4)+my_custom_themes+theme(strip.text.x = element_text(size = 16))
+
+
+
+```
+
+```{r, include=FALSE}
+
+### Checking that the fallow year in wheat fallow is actually fallow
+
+check = data_er[data_er$Time=="Present"&data_er$Zone=="Low"&data_er$Tillage=="Intense",]
+
+check_2<-data_er[data_er$Time=="Present"&data_er$Zone=="Low"&data_er$Tillage=="Intense"&data_er$Rotation=="FW",]
+
+check_agg_yearly_ET<-aggregate(cbind(ET, Sed..Det...t.ha.)~WY+Rotation+Zone+Tillage+CropYear, check, sum)
+
+ggplot(check_agg_yearly_ET, aes(WY, ET, color=Rotation))+geom_point()+geom_line()+ #facet_wrap(~Zone, scales = "free", ncol = 1)+
+  # scale_color_manual(values=clr)+
+ geom_text(aes(label = check_agg_yearly_ET$CropYear), nudge_y=10, nudge_x = 0)+
+  my_custom_themes+theme(legend.position = "right", strip.text.x = element_text(size =15))
+
+### conclusion ####
+
+# Both low and intermediate zone have wrong crop year assined in Wheat and fallow
+
+# In present FW rotation in high has correct order
+#In present FW rotation in intermediate zone has correct order
+#In present both rotation in low zone has correct order
+
+```
+
+### Analysing only soil moisture 
+
+
+```{r, echo=FALSE}
+
+#data_er_wo_fw_in_present<-data_er[c(-dAA1,-dAA2),]
+
+#data_er
+
+
+
+#Er_daily_comb_rot<-aggregate(cbind(Sed..Det...t.ha.,ET,Precip.mm.,Rain...Melt..mm.,Runoff..mm.)~Year+WY+Month+Day+Zone+Time+Tillage+Method, data_er_wo_fw_in_present, mean)
+
+Er_yearly_sm_rot <- aggregate(cbind(Storage..mm.)~WY+Zone+Time+Tillage+Method+Rotation, data_er, mean)
+
+Er_yearly_comb_sm_avg<-aggregate(cbind(Storage..mm.)~Zone+Time+Tillage+Method+Rotation, Er_yearly_sm_rot, mean)
+
+### exclude fw in present ###
+
+Er_rot_comb_sm_avg_wo_fw<-aggregate(cbind(Storage..mm.)~Zone+Time+Tillage+Method, Er_yearly_sm_rot, mean)
+
+kable(round_df(Er_yearly_comb_sm_avg,2))
+
+ ggplot(Er_yearly_comb_sm_avg, aes(fill = Rotation, x = Tillage, y = Storage..mm.))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~Zone+Time, ncol= 2)+my_custom_themes+theme(strip.text.x = element_text(size = 16))
+
+
+```
+
+
+### Analysing only Annual avg Runoff
+
+
+```{r, echo=FALSE}
+
+#data_er_wo_fw_in_present<-data_er[c(-dAA1,-dAA2),]
+
+#data_er
+
+
+
+#Er_daily_comb_rot<-aggregate(cbind(Sed..Det...t.ha.,ET,Precip.mm.,Rain...Melt..mm.,Runoff..mm.)~Year+WY+Month+Day+Zone+Time+Tillage+Method, data_er_wo_fw_in_present, mean)
+
+Er_yearly_RO_rot <- aggregate(cbind(Runoff..mm.)~WY+Zone+Time+Tillage+Method+Rotation, data_er, sum)
+
+Er_yearly_comb_RO_avg<-aggregate(cbind(Runoff..mm.)~Zone+Time+Tillage+Method+Rotation, Er_yearly_RO_rot, mean)
+
+kable(round_df(Er_yearly_comb_RO_avg,2))
+
+ggplot(Er_yearly_comb_RO_avg, aes(fill = Rotation, x = Tillage, y = Runoff..mm.))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~Zone+Time, ncol= 2)+my_custom_themes+theme(strip.text.x = element_text(size = 16))
+
+
+```
+
+
+
+
+### Analysing only Annual avg ET
+
+
+```{r, echo=FALSE}
+
+#data_er_wo_fw_in_present<-data_er[c(-dAA1,-dAA2),]
+
+#data_er
+
+#Er_daily_comb_rot<-aggregate(cbind(Sed..Det...t.ha.,ET,Precip.mm.,Rain...Melt..mm.,Runoff..mm.)~Year+WY+Month+Day+Zone+Time+Tillage+Method, data_er_wo_fw_in_present, mean)
+
+Er_yearly_ET_rot <- aggregate(cbind(ET)~WY+Zone+Time+Tillage+Method+Rotation, data_er, sum)
+
+Er_yearly_comb_ET_avg<-aggregate(cbind(ET)~Zone+Time+Tillage+Method+Rotation, Er_yearly_ET_rot, mean)
+
+kable(round_df(Er_yearly_comb_ET_avg,2))
+
+ggplot(Er_yearly_comb_ET_avg, aes(fill = Rotation, x = Tillage, y = ET))+geom_bar(position = "dodge", stat = "identity")+facet_wrap(~Zone+Time, ncol= 2)+my_custom_themes+theme(strip.text.x = element_text(size = 16))
+
+
+```
+
+### Compare with Kaiser data
+
+```{r, echo=FALSE}
+
+data_comp_obs_WEPP<-read.csv("F:\\WORK\\Project_2\\WEPPwatershed\\after_anisotropy\\erosion_summary\\obs_vs_WEPP.csv")[,2:9]
+
+
+library(ggplot2)
+
+lt_ord2 = c("solid","dashed")
+lt_col2 = c("black","black")
+pt_shp = c(16, 1)
+pt_fl = c("white","black")
+
+data_comp_obs_WEPP$Method <- factor(data_comp_obs_WEPP$Method, labels = c("Kaiser Field Data", "WEPP-simulated"))
+
+obs <- data_comp_obs_WEPP[data_comp_obs_WEPP$Method=="Kaiser Field Data",]
+sim<-data_comp_obs_WEPP[data_comp_obs_WEPP$Method!="Kaiser Field Data",]
+
+data_comp_obs_wepp2<-pivot_wider(data_comp_obs_WEPP[,c(-3,-4)], names_from = c("Method"), values_from = c("Erosion..t.ha."))
+
+cr<-cor.test(data_comp_obs_wepp2$`Kaiser Field Data`, data_comp_obs_wepp2$`WEPP-simulated`)
+
+cr
+
+
+data_comp_obs_wepp2$logK <-log(data_comp_obs_wepp2$`Kaiser Field Data`, 10)
+data_comp_obs_wepp2$logW <-log(data_comp_obs_wepp2$`WEPP-simulated`, 10)
+
+shapiro.test(data_comp_obs_wepp2$`Kaiser Field Data`)
+shapiro.test(data_comp_obs_wepp2$`WEPP-simulated`)
+
+shapiro.test(data_comp_obs_wepp2$logK)
+shapiro.test(data_comp_obs_wepp2$logW)
+
+
+ggplot(data_comp_obs_wepp2)+geom_histogram(aes(`Kaiser Field Data`), binwidth = 1)
+ggplot(data_comp_obs_wepp2)+geom_histogram(aes(`WEPP-simulated`), binwidth = 10)
+
+ggplot(data_comp_obs_wepp2)+geom_histogram(aes(logK))
+ggplot(data_comp_obs_wepp2)+geom_histogram(aes(logW))
+
+# mean(data_comp_obs_wepp2$`Kaiser Field Data`)
+
+# mean(data_comp_obs_wepp2$`WEPP-simulated`)
+
+
+lll<-lm(data_comp_obs_wepp2$`WEPP-simulated`~data_comp_obs_wepp2$`Kaiser Field Data`)
+summary(lll)
+par(mfrow=c(2,2))
+plot(lll)
+
+#### The data was already normally distributed
+shapiro.test(lll$residuals)
+
+################## After log transformation ###########
+
+lll2<-lm(data_comp_obs_wepp2$logW~data_comp_obs_wepp2$logK)
+summary(lll2)
+
+### R2 improved to 0.05 
+
+par(mfrow=c(2,2))
+plot(lll2)
+
+#### The data was again normally distributed 
+shapiro.test(lll2$residuals)
+
+######x vs y plot
+
+ggplot(data_comp_obs_wepp2,
+       aes(`Kaiser Field Data`, `WEPP-simulated`))+
+  geom_point(size = 2.5)+
+  # geom_line(size =1 )+
+  # scale_linetype_manual(values = lt_ord2)+
+  # scale_color_manual(values = lt_col2)+
+  # scale_shape_manual(values = pt_shp)+
+  # scale_y_continuous(limits = c(0,200), breaks = range)+
+  scale_x_continuous(expand = c(0,0),n.breaks = 8, limits = c(0,160))+
+ scale_y_continuous(expand = c(0,0),limits = c(0,160), n.breaks = 8)+
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = "Linear fit"), colour= "black" )+
+  stat_poly_eq(aes(label = paste(after_stat(rr.label))), size = 8)+
+  # scale_y_log10(limits = c(2,200), n.breaks = 10, expand = c(0,0))+
+  # scale_y_logFC(limits = c(2,200))+
+  # annotation_logticks(outside = TRUE)+
+  # coord_cartesian(clip = "off")+
+  geom_abline(aes(intercept = 0, slope = 1, linetype = "1:1 line"), colour = "black", show.legend = FALSE)+
+  scale_fill_manual(values = pt_fl)+
+  # scale_colour_manual(values = c("black", "grey10"),
+                      # labels = c("Linear fit", "1:1 line"))+
+  
+  scale_linetype_manual(values = c( "Linear fit" = "dashed", "1:1 line" = "dotted")) +
+guides(fill = guide_legend(keywidth = 1, keyheight = 1),
+    linetype=guide_legend(keywidth = 3, keyheight = 1),
+    colour=guide_legend(keywidth = 3, keyheight = 1))+
+  
+  # scale_linetype_manual(values = c("dotted"))+
+  # scale_colour_manual(values = c("grey10"))
+                     # labels = c("Linear fit", "1:1 line"))+
+ # scale_linetype_manual(values = c("Linear fit"= 2, "1:1 line"="dashed"))+
+  theme_bw()+
+  
+   geom_text(aes(155, y = 140, label = "(b)"), size = 10)+
+  
+  #labs(y = expression(paste("Erosion t  ", ha^-1)))+
+  my_custom_themes+
+  theme(legend.position = c(0.75,0.98),
+        legend.direction = "vertical",
+        legend.text = element_text(size = 20))+
+  theme(plot.margin = unit(c(1,1,1,1), "cm"))+
+  theme(
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank(), 
+    # strip.text.x = element_text(size = 18),
+    axis.title.x = element_text(size = 24),
+    axis.title.y = element_text(size = 24),
+    
+    axis.text.y.left = element_text(size = 26),
+                         axis.text.x.bottom = element_text(angle = 0,hjust = 0.5, size = 26))
+
+# ggsave("observedvsWEPP_xy_a.eps", height = 8, width = 12)
+
+######### XY plot in log scale #####################
+
+# ggplot(data_comp_obs_wepp2,
+#        aes(logK, logW))+
+#   geom_point(size = 2.5)+
+#   # geom_line(size =1 )+
+#   # scale_linetype_manual(values = lt_ord2)+
+#   # scale_color_manual(values = lt_col2)+
+#   # scale_shape_manual(values = pt_shp)+
+#   # scale_y_continuous(limits = c(0,200), breaks = range)+
+#   # scale_x_continuous(expand = c(0,0),n.breaks = 8, limits = c(0,160))+
+#  # scale_y_continuous(expand = c(0,0),limits = c(0,160), n.breaks = 8)+
+#   geom_smooth(method = "lm", se = FALSE, aes(linetype = "Linear fit"), colour= "black" )+
+#   stat_poly_eq(aes(label = paste(after_stat(rr.label))), size = 8)+
+#   # scale_y_log10(limits = c(2,200), n.breaks = 10, expand = c(0,0))+
+#   # scale_y_logFC(limits = c(2,200))+
+#   # annotation_logticks(outside = TRUE)+
+#   # coord_cartesian(clip = "off")+
+#  # geom_abline(aes(intercept = 0, slope = 1, linetype = "1:1 line"), colour = "black", show.legend = FALSE)+
+#   scale_fill_manual(values = pt_fl)+
+#   # scale_colour_manual(values = c("black", "grey10"),
+#                       # labels = c("Linear fit", "1:1 line"))+
+#   
+#   scale_linetype_manual(values = c( "Linear fit" = "dashed", "1:1 line" = "dotted")) +
+# guides(fill = guide_legend(keywidth = 1, keyheight = 1),
+#     linetype=guide_legend(keywidth = 3, keyheight = 1),
+#     colour=guide_legend(keywidth = 3, keyheight = 1))+
+#   
+#   # scale_linetype_manual(values = c("dotted"))+
+#   # scale_colour_manual(values = c("grey10"))
+#                      # labels = c("Linear fit", "1:1 line"))+
+#  # scale_linetype_manual(values = c("Linear fit"= 2, "1:1 line"="dashed"))+
+#   theme_bw()+
+#   
+#    # geom_text(aes(155, y = 140, label = "(b)"), size = 10)+
+#   
+#   #labs(y = expression(paste("Erosion t  ", ha^-1)))+
+#   my_custom_themes+
+#   theme(legend.position = c(0.55,0.98),
+#         legend.direction = "vertical",
+#         legend.text = element_text(size = 20))+
+#   theme(plot.margin = unit(c(1,1,1,1), "cm"))+
+#   theme(
+#     strip.text.x = element_blank(),
+#     strip.text.y = element_blank(), 
+#     # strip.text.x = element_text(size = 18),
+#     axis.title.x = element_text(size = 24),
+#     axis.title.y = element_text(size = 24),
+#     
+#     axis.text.y.left = element_text(size = 26),
+#                          axis.text.x.bottom = element_text(angle = 0,hjust = 0.5, size = 26))
+# 
+
+####ggsave("WeppvsKaiser_log_scale.eps", width = 12, height = 8)
+
+
+
+# ggplot(data_comp_obs_wepp2,
+#        aes(`Kaiser Field Data`, `WEPP-simulated`))+
+#   geom_point(size = 2.5)+
+#   # geom_line(size =1 )+
+#   # scale_linetype_manual(values = lt_ord2)+
+#   # scale_color_manual(values = lt_col2)+
+#   # scale_shape_manual(values = pt_shp)+
+#   # scale_y_continuous(limits = c(0,200), breaks = range)+
+#   scale_x_continuous(expand = c(0,0),n.breaks = 8, limits = c(0,160))+
+#  scale_y_continuous(expand = c(0,0),limits = c(0,160), n.breaks = 8)+
+#   geom_smooth(method = "glm",
+#               method.args = list(family = gaussian(link = "log")),
+#               se = FALSE, aes(linetype = "Linear fit"), colour= "black" )+
+#   stat_poly_eq(aes(label = paste(after_stat(rr.label))), size = 8)+
+#   # scale_y_log10(limits = c(2,200), n.breaks = 10, expand = c(0,0))+
+#   # scale_y_logFC(limits = c(2,200))+
+#   # annotation_logticks(outside = TRUE)+
+#   # coord_cartesian(clip = "off")+
+#   geom_abline(aes(intercept = 0, slope = 1, linetype = "1:1 line"), colour = "black", show.legend = FALSE)+
+#   scale_fill_manual(values = pt_fl)+
+#   # scale_colour_manual(values = c("black", "grey10"),
+#                       # labels = c("Linear fit", "1:1 line"))+
+#   
+#   scale_linetype_manual(values = c( "Linear fit" = "dashed", "1:1 line" = "dotted")) +
+# guides(fill = guide_legend(keywidth = 1, keyheight = 1),
+#     linetype=guide_legend(keywidth = 3, keyheight = 1),
+#     colour=guide_legend(keywidth = 3, keyheight = 1))+
+#   
+#   # scale_linetype_manual(values = c("dotted"))+
+#   # scale_colour_manual(values = c("grey10"))
+#                      # labels = c("Linear fit", "1:1 line"))+
+#  # scale_linetype_manual(values = c("Linear fit"= 2, "1:1 line"="dashed"))+
+#   theme_bw()+
+#   
+#    geom_text(aes(155, y = 140, label = "(b)"), size = 10)+
+#   
+#   #labs(y = expression(paste("Erosion t  ", ha^-1)))+
+#   my_custom_themes+
+#   theme(legend.position = c(0.75,0.98),
+#         legend.direction = "vertical",
+#         legend.text = element_text(size = 20))+
+#   theme(plot.margin = unit(c(1,1,1,1), "cm"))+
+#   theme(
+#     strip.text.x = element_blank(),
+#     strip.text.y = element_blank(), 
+#     # strip.text.x = element_text(size = 18),
+#     axis.title.x = element_text(size = 24),
+#     axis.title.y = element_text(size = 24),
+#     
+#     axis.text.y.left = element_text(size = 26),
+#                          axis.text.x.bottom = element_text(angle = 0,hjust = 0.5, size = 26))
+# 
+
+
+######line plot
+
+ggplot(data_comp_obs_WEPP,
+       aes(Water.Year, Erosion..t.ha., color = Method, linetype = Method))+
+  geom_point(aes(shape = Method, fill = Method), size =4)+
+  geom_line(size =1 )+
+  scale_linetype_manual(values = lt_ord2)+
+  scale_color_manual(values = lt_col2)+
+  scale_shape_manual(values = pt_shp)+
+  # scale_y_continuous(limits = c(0,200), breaks = range)+
+  scale_x_continuous(limits= c(1940,1985),breaks = seq(1940,1990,5))+
+  scale_y_log10(limits = c(2,200), n.breaks = 10, expand = c(0,0))+
+  # scale_y_logFC(limits = c(2,200))+
+  annotation_logticks(outside = TRUE)+
+  coord_cartesian(clip = "off")+
+  scale_fill_manual(values = pt_fl)+
+  theme_bw()+
+  # geom_text(aes(1985, y = 130, label = "(a)"), size = 10, show.legend = FALSE)+
+  labs(y = expression(paste("Erosion Mg  ", ha^-1)))+
+  my_custom_themes+
+  theme(legend.position = c(0.9,0.98),
+        legend.direction = "vertical",
+        legend.text = element_text(size = 20))+
+  theme(plot.margin = unit(c(1,1,1,1), "cm"))+
+  theme(
+    strip.text.x = element_blank(),
+    strip.text.y = element_blank(), 
+    # strip.text.x = element_text(size = 18),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 24),
+    
+    axis.text.y.left = element_text(size = 26),
+                         axis.text.x.bottom = element_text(angle = 50,hjust = 1, size = 20))
+  
+  # ylab("Erosion t $\mathregular{ha^{-1}}$")+
+
+#ggsave("observedvsWEPP_log_scale_3.eps", height = 9, width = 14)
+
+
+# annotation_logticks(base = 10, sides = "bl")
+```
+## Compare with High, Intermediate, and Low zone separately
+
+
+```{r, include=FALSE}
+past_three_zones_combined<-read.csv("C:\\Users\\mugalsamrat.dahal\\OneDrive - Washington State University (email.wsu.edu)\\Paper2\\Weppwatershed\\past_all.csv")[,2:5]
+
+obs<-data_comp_obs_WEPP[data_comp_obs_WEPP$Method=="Kaiser Field Data",]
+obsA<-obs
+obsB<-obs
+obsC<-obs
+
+obsA$Zone<-"High"
+obsB$Zone<-"Inter"
+obsC$Zone<-"Low"
+
+
+obs_all<-rbind(obsA, obsB, obsC)
+
+c1<-past_three_zones_combined[,c(1,2,3,4)]
+colnames(c1)<-c("Year","Zone","Erosion","Method")
+
+c2<-obs_all[,c(1,3,2,7)]
+colnames(c2)<-c("Year","Zone","Erosion","Method")
+
+compss_allthree_zone_obs<-rbind(c1,c2)
+
+agg_erosion_comp<-aggregate(Erosion~Zone+Method, compss_allthree_zone_obs, mean)
+
+
+  ggplot(compss_allthree_zone_obs, aes(Year, Erosion, color = Method))+
+  geom_point()+geom_line()+
+  facet_wrap(~Zone, ncol = 1)
+#ggsave("observedvsWEPP_all_three_Zones.eps", height = 9, width = 14)
+
+```
