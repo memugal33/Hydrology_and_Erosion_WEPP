@@ -1,3 +1,3 @@
-# Hydrology_and_Erosion_WEPP
+# Summary
 
-This repository consists of preprocessing and postprocessing scripts in both python and r for running wepp and analysis of results.
+This repository consists of preprocessing and postprocessing scripts in both python and r for running WEPP and analysis of results.
