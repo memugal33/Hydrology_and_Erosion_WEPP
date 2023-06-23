@@ -10,4 +10,4 @@ This repository consists of preprocessing and postprocessing scripts in both pyt
 
 ```summarize_waterbal.py``` will summarize water balance for each hillslope. 
 
-
+```yearly_erosion_single_hillslope.py``` will summarize yearly erosion for each hillslope for each OFE.. This function is mainly used for post processing in large watershed with high number of hillslopes.
