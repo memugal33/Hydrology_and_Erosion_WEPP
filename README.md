@@ -10,4 +10,4 @@ This repository consists of preprocessing and postprocessing scripts in both pyt
 
 ```summarize_waterbal.py``` will summarize water balance for each hillslope. 
 
-```Report_result_final.ipynb``` file processes all the WEPP watershed runs, computes and summarize water balance and erosion... Map them to different WEPPID and TopazID using Geopandas.. And provide a clean dataframe for analysis in R and Python for producing graphs and conducting further analysis.
+
