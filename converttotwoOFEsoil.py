@@ -9,7 +9,7 @@ import glob
 import pandas as pd
 #import numpy as np
 
-### Convert slope file into two different OFEs
+### Convert soil file into two different OFEs
 readdir = "F:\\WORK\\Project_2\\WEPPwatershed\\int_sol_cal\\wepp\\runs"
 writedir = "F:\\WORK\\Project_2\\WEPPwatershed\\int_2ofes\\wepp\\runs"
 ofeno = 2
